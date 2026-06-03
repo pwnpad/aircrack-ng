@@ -5996,6 +5996,15 @@ build_band6_freqstring(const char * chan6list, int with_bg, int with_a)
 		}                                                                      \
 	} while (0)
 
+	/* Emit in ascending band order (2.4 -> 5 -> 6 GHz), mirroring the
+	 * abg_chans hop order, so the scan starts at 2.4GHz and works upward. */
+	if (with_bg)
+		for (int i = 0; bg_chans[i]; i++)
+			APPEND_FREQ(getFrequencyFromChannel(bg_chans[i]));
+	if (with_a)
+		for (int i = 0; a_chans[i]; i++)
+			APPEND_FREQ(getFrequencyFromChannel(a_chans[i]));
+
 	if (chan6list != NULL)
 	{
 		char * work = strdup(chan6list);
@@ -6027,13 +6036,6 @@ build_band6_freqstring(const char * chan6list, int with_bg, int with_a)
 		for (int i = 0; a6_chans[i]; i++)
 			APPEND_FREQ(getFrequencyFromChannel6E(a6_chans[i]));
 	}
-
-	if (with_bg)
-		for (int i = 0; bg_chans[i]; i++)
-			APPEND_FREQ(getFrequencyFromChannel(bg_chans[i]));
-	if (with_a)
-		for (int i = 0; a_chans[i]; i++)
-			APPEND_FREQ(getFrequencyFromChannel(a_chans[i]));
 
 #undef APPEND_FREQ
 
@@ -7058,7 +7060,10 @@ int main(int argc, char * argv[])
 				return (EXIT_FAILURE);
 			}
 
-			rearrange_frequencies();
+			/* The band path (--band ...6) builds an ordered 2.4->5->6 GHz list;
+			 * keep that order. rearrange_frequencies() spreads adjacent
+			 * channels and would break the band grouping. */
+			if (!band6) rearrange_frequencies();
 
 			freq_count = getfreqcount(0);
 
