@@ -61,4 +61,10 @@ IMPORT int getChannelFromFrequency(int frequency);
 #define HIGHEST_CHANNEL 220
 #define LOWEST_CHANNEL -16
 
+/* Highest 6GHz (802.11ax/be) channel number (ch 233 = 7115 MHz). Used as the
+ * upper bound when validating a channel derived from a received frequency.
+ * Kept separate from HIGHEST_CHANNEL because getFrequencyFromChannel()'s table
+ * only extends to HIGHEST_CHANNEL. */
+#define HIGHEST_CHANNEL_6E 233
+
 #endif

@@ -1739,7 +1739,7 @@ static int dump_add_packet(unsigned char * h80211,
 		}
 
 		st_cur->rate_from = ri->ri_rate;
-		if (ri->ri_channel > 0 && ri->ri_channel <= HIGHEST_CHANNEL)
+		if (ri->ri_channel > 0 && ri->ri_channel <= HIGHEST_CHANNEL_6E)
 			st_cur->channel = ri->ri_channel;
 		else
 			st_cur->channel = lopt.channel[cardnum];
@@ -2184,6 +2184,16 @@ skip_probe:
 		}
 	}
 
+	/* 6GHz APs advertise their channel only in the HE 6GHz Operation element,
+	 * which we do not parse, and their beacons carry no DS/HT channel. Fall
+	 * back to the channel derived from the frequency the frame was received on
+	 * (which is the AP's primary 20MHz channel). */
+	if (ap_cur != NULL && ap_cur->channel <= 0 && ri->ri_channel > 0
+		&& ri->ri_channel <= HIGHEST_CHANNEL_6E)
+	{
+		ap_cur->channel = ri->ri_channel;
+	}
+
 	/* packet parsing: Beacon & Probe response */
 	/* TODO: Merge this if and the one above */
 	if ((h80211[0] == IEEE80211_FC0_SUBTYPE_BEACON
@@ -2503,7 +2513,7 @@ skip_probe:
 
 		if (ap_cur->channel == -1)
 		{
-			if (ri->ri_channel > 0 && ri->ri_channel <= HIGHEST_CHANNEL)
+			if (ri->ri_channel > 0 && ri->ri_channel <= HIGHEST_CHANNEL_6E)
 				ap_cur->channel = ri->ri_channel;
 			else
 				ap_cur->channel = lopt.channel[cardnum];
@@ -3653,11 +3663,22 @@ static void dump_print(int ws_row, int ws_col, int if_num)
 
 	if (lopt.freqoption)
 	{
-		snprintf(strbuf, sizeof(strbuf) - 1, " Freq %4d", lopt.frequency[0]);
+		/* Frequency-hopping mode (incl. --band 6 / abg6): show the channel
+		 * derived from the current frequency so the label is consistent with
+		 * channel mode. */
+		int ch0 = getChannelFromFrequency(lopt.frequency[0]);
+		if (lopt.frequency[0] > 0 && ch0 > 0)
+			snprintf(strbuf, sizeof(strbuf) - 1, " CH %3d", ch0);
+		else
+			snprintf(strbuf, sizeof(strbuf) - 1, " CH --");
 		for (i = 1; i < if_num; i++)
 		{
+			int chi = getChannelFromFrequency(lopt.frequency[i]);
 			memset(buffer, '\0', sizeof(buffer));
-			snprintf(buffer, sizeof(buffer), ",%4d", lopt.frequency[i]);
+			if (lopt.frequency[i] > 0 && chi > 0)
+				snprintf(buffer, sizeof(buffer), ",%3d", chi);
+			else
+				snprintf(buffer, sizeof(buffer), ",--");
 			strlcat(strbuf, buffer, sizeof(strbuf));
 		}
 	}
