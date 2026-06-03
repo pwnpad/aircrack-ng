@@ -48,10 +48,10 @@ Indicate the channel(s) to listen to. By default airodump-ng hops on all 2.4GHz 
 Ignore access points on channels other than the selected one(s). Requires \-\-channel (or \-c).
 .TP
 .I -C <freq>[,<freq>[,...]]
-Indicates the frequencies (in MHz) to listen to. By default airodump-ng hops on all 2.4GHz channels. This is also the way to scan the 6GHz band (WiFi 6E/7), e.g. \-C 5955-7115; 6GHz is not reachable through channel mode (\-c/\-\-band).
+Indicates the frequencies (in MHz) to listen to. By default airodump-ng hops on all 2.4GHz channels. This is also a band-agnostic way to scan the 6GHz band (WiFi 6E/7), e.g. \-C 5955-7115. The 6GHz band can also be scanned through channel mode with \-\-band 6 (see below).
 .TP
-.I -b <abg>, --band <abg>
-Indicate the band on which airodump-ng should hop. It can be a combination of \(aqa\(aq, \(aqb\(aq and \(aqg\(aq letters (\(aqb\(aq and \(aqg\(aq uses 2.4GHz and \(aqa\(aq uses 5GHz). Incompatible with --channel option.
+.I -b <abg6>, --band <abg6>
+Indicate the band on which airodump-ng should hop. It can be a combination of \(aqa\(aq, \(aqb\(aq, \(aqg\(aq and \(aq6\(aq letters (\(aqb\(aq and \(aqg\(aq use 2.4GHz, \(aqa\(aq uses 5GHz and \(aq6\(aq uses the 6GHz band, WiFi 6E/7). For the a/b/g bands this option is incompatible with \-\-channel. When \(aq6\(aq is included, \-\-channel may be combined with it and is interpreted as 6GHz channel numbers, e.g. \-\-band 6 \-\-channel 1,5,9.
 .TP
 .I -s <method>, --cswitch <method>
 Defines the way airodump-ng sets the channels when using more than one card. Valid values: 0 (FIFO, default value), 1 (Round Robin) or 2 (Hop on last).
