@@ -186,6 +186,7 @@ int wait_for_beacon(struct wif * wi,
 	struct timeval tv, tv2;
 	char essid2[33];
 	uint8_t * data = NULL;
+	struct rx_info ri;
 
 	gettimeofday(&tv, NULL);
 	while (1)
@@ -194,7 +195,8 @@ int wait_for_beacon(struct wif * wi,
 
 		while (read_len < 22)
 		{
-			read_len = read_packet(wi, pkt_sniff, sizeof(pkt_sniff), NULL);
+			memset(&ri, 0, sizeof(ri));
+			read_len = read_packet(wi, pkt_sniff, sizeof(pkt_sniff), &ri);
 
 			gettimeofday(&tv2, NULL);
 			if (((tv2.tv_sec - tv.tv_sec) * 1000000)
@@ -214,6 +216,11 @@ int wait_for_beacon(struct wif * wi,
 		if (pkt_sniff[0] != 0x80) continue;
 
 		chan = get_channel(pkt_sniff, len);
+		/* 6GHz (WiFi 6E/7) beacons carry neither the DS Parameter Set nor the
+		 * HT Information element, so get_channel() can't find a channel. Fall
+		 * back to the channel derived from the radiotap reception frequency
+		 * (ri_channel), which equals the AP's primary 20MHz channel. */
+		if (chan < 0 && ri.ri_channel > 0) chan = ri.ri_channel;
 		if (chan < 0) continue;
 
 		if (essid == NULL) continue;
