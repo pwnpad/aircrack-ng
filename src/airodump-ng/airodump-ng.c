@@ -868,6 +868,8 @@ static const char usage[] =
 	"                              Requires --channel (or -c)\n"
 	"      --band <abg>          : Band on which airodump-ng should hop\n"
 	"      -C    <frequencies>   : Uses these frequencies in MHz to hop\n"
+	"                              For 6GHz (WiFi 6E/7) use frequency mode,\n"
+	"                              e.g. -C 5955-7115 (channel mode unsupported)\n"
 	"      --cswitch  <method>   : Set channel switching method\n"
 	"                    0       : FIFO (default)\n"
 	"                    1       : Round Robin\n"

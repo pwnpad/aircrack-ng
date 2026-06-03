@@ -1086,6 +1086,64 @@ static int linux_set_channel_nl80211(struct wif * wi, int channel)
 {
 	return linux_set_ht_channel_nl80211(wi, channel, CHANNEL_NO_HT);
 }
+
+/* WEXT fallback, defined after the #endif below */
+static int linux_set_freq(struct wif * wi, int freq);
+
+/*
+ * Set the radio to an absolute frequency (in MHz) via nl80211. Unlike
+ * linux_set_ht_channel_nl80211() this does NOT go through a channel-number
+ * conversion, so it can reach 6GHz (WiFi 6E/7) frequencies that have no
+ * unambiguous channel number. 20MHz (NO_HT) is sufficient for passive monitor.
+ */
+static int linux_set_freq_nl80211(struct wif * wi, int freq)
+{
+	struct priv_linux * dev = wi_priv(wi);
+	unsigned int devid;
+	struct nl_msg * msg;
+
+	/* exec-based legacy drivers can't talk nl80211: use the WEXT path */
+	switch (dev->drivertype)
+	{
+		case DT_WLANNG:
+		case DT_ORINOCO:
+		case DT_ZD1211RW:
+			return linux_set_freq(wi, freq);
+
+		default:
+			break;
+	}
+
+	devid = if_nametoindex(wi->wi_interface);
+	msg = nlmsg_alloc();
+	if (!msg)
+	{
+		fprintf(stderr, "failed to allocate netlink message\n");
+		return 2;
+	}
+
+	genlmsg_put(msg,
+				0,
+				0,
+				genl_family_get_id(state.nl80211),
+				0,
+				0,
+				NL80211_CMD_SET_WIPHY,
+				0);
+
+	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, devid);
+	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
+	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE, NL80211_CHAN_NO_HT);
+
+	nl_send_auto_complete(state.nl_sock, msg);
+	nlmsg_free(msg);
+
+	dev->freq = freq;
+
+	return (0);
+nla_put_failure:
+	return -ENOBUFS;
+}
 #else // CONFIG_LIBNL
 
 static int linux_set_channel(struct wif * wi, int channel)
@@ -2405,7 +2463,11 @@ static struct wif * linux_open(char * iface)
 	wi->wi_set_channel = linux_set_channel;
 #endif // CONFIG_LIBNL
 	wi->wi_get_channel = linux_get_channel;
+#ifdef CONFIG_LIBNL
+	wi->wi_set_freq = linux_set_freq_nl80211;
+#else
 	wi->wi_set_freq = linux_set_freq;
+#endif // CONFIG_LIBNL
 	wi->wi_get_freq = linux_get_freq;
 #ifdef CONFIG_LIBNL
 	wi->wi_close = linux_close_nl80211;

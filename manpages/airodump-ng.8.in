@@ -48,7 +48,7 @@ Indicate the channel(s) to listen to. By default airodump-ng hops on all 2.4GHz 
 Ignore access points on channels other than the selected one(s). Requires \-\-channel (or \-c).
 .TP
 .I -C <freq>[,<freq>[,...]]
-Indicates the frequencies to listen to. By default airodump-ng hops on all 2.4GHz channels.
+Indicates the frequencies (in MHz) to listen to. By default airodump-ng hops on all 2.4GHz channels. This is also the way to scan the 6GHz band (WiFi 6E/7), e.g. \-C 5955-7115; 6GHz is not reachable through channel mode (\-c/\-\-band).
 .TP
 .I -b <abg>, --band <abg>
 Indicate the band on which airodump-ng should hop. It can be a combination of \(aqa\(aq, \(aqb\(aq and \(aqg\(aq letters (\(aqb\(aq and \(aqg\(aq uses 2.4GHz and \(aqa\(aq uses 5GHz). Incompatible with --channel option.

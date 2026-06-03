@@ -74,8 +74,11 @@ EXPORT int getChannelFromFrequency(int frequency)
 	else if (frequency == 2484)
 		return 14;
 
-	else if (frequency >= 4920 && frequency <= 6100)
+	else if (frequency >= 4920 && frequency <= 5895)
 		return (frequency - 5000) / 5;
+	else if (frequency >= 5955 && frequency <= 7115)
+		// 6GHz (802.11ax/be): channel 1 = 5955 MHz, channel 233 = 7115 MHz
+		return (frequency - 5950) / 5;
 	else
 		return -1;
 }
