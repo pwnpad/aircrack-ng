@@ -65,6 +65,18 @@ EXPORT int getFrequencyFromChannel(int channel)
 }
 
 /**
+ * Return the frequency in Mhz for an 802.11ax/be 6GHz channel number.
+ * 6GHz channels use their own numbering: 1, 5, 9, ... 233 (20MHz spacing),
+ * where channel 1 = 5955 MHz (freq = 5950 + channel * 5). These numbers
+ * overlap 2.4/5GHz channel numbers, so the band must be known by the caller.
+ * Returns -1 for out-of-range channels.
+ */
+EXPORT int getFrequencyFromChannel6E(int channel)
+{
+	return (channel >= 1 && channel <= 233) ? 5950 + (channel * 5) : -1;
+}
+
+/**
  * Return the channel from the frequency (in Mhz)
  */
 EXPORT int getChannelFromFrequency(int frequency)

@@ -48,6 +48,7 @@
 #endif
 
 IMPORT int getFrequencyFromChannel(int channel);
+IMPORT int getFrequencyFromChannel6E(int channel);
 IMPORT int getChannelFromFrequency(int frequency);
 
 /*
