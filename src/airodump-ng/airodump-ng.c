@@ -121,6 +121,14 @@ static int a_chans[]
 	   118, 120, 122, 124, 126, 128, 132, 134, 136, 138, 140, 142,
 	   144, 149, 151, 153, 155, 157, 159, 161, 165, 169, 173, 0};
 
+/* 6GHz (802.11ax/be) 20MHz channels: 1, 5, 9, ... 233 */
+static int a6_chans[]
+	= {1,	5,	 9,	  13,  17,	21,	 25,  29,  33,	37,	 41,  45,  49,
+	   53,	57,	 61,  65,  69,	73,	 77,  81,  85,	89,	 93,  97,  101,
+	   105, 109, 113, 117, 121, 125, 129, 133, 137, 141, 145, 149, 153,
+	   157, 161, 165, 169, 173, 177, 181, 185, 189, 193, 197, 201, 205,
+	   209, 213, 217, 221, 225, 229, 233, 0};
+
 static int * frequencies;
 
 static volatile int quitting = 0;
@@ -866,10 +874,11 @@ static const char usage[] =
 	"      --channel <channels>  : Capture on specific channels\n"
 	"      --ignore-other-chans  : Filter out other channels\n"
 	"                              Requires --channel (or -c)\n"
-	"      --band <abg>          : Band on which airodump-ng should hop\n"
+	"      --band <abg6>         : Band on which airodump-ng should hop\n"
+	"                              a/b/g = 2.4/5GHz, 6 = 6GHz (WiFi 6E/7).\n"
+	"                              With 6, --channel takes 6GHz channel\n"
+	"                              numbers (e.g. --band 6 --channel 1,5,9)\n"
 	"      -C    <frequencies>   : Uses these frequencies in MHz to hop\n"
-	"                              For 6GHz (WiFi 6E/7) use frequency mode,\n"
-	"                              e.g. -C 5955-7115 (channel mode unsupported)\n"
 	"      --cswitch  <method>   : Set channel switching method\n"
 	"                    0       : FIFO (default)\n"
 	"                    1       : Round Robin\n"
@@ -5935,6 +5944,128 @@ static int rearrange_frequencies(void)
 	return (0);
 }
 
+/*
+ * Build a comma-separated frequency list (in MHz) used to drive the
+ * frequency-hopping path for the 6GHz band. 6GHz (WiFi 6E/7) channel numbers
+ * overlap 2.4/5GHz numbering and therefore cannot drive the channel hopper, so
+ * 6GHz is always expressed as frequencies. When chan6list is non-NULL it is a
+ * --channel style string ("1,5,9" or "1-29") of 6GHz channel numbers; otherwise
+ * every 6E channel is used. with_bg / with_a additionally append the 2.4 / 5GHz
+ * bands. Frequencies the card does not support are pruned later by
+ * detect_frequencies(). Returns a malloc'd string the caller must free, or NULL.
+ */
+static char *
+build_band6_freqstring(const char * chan6list, int with_bg, int with_a)
+{
+	const size_t cap = 8192;
+	size_t len = 0;
+	char * buf = (char *) malloc(cap);
+	if (buf == NULL) return NULL;
+	buf[0] = '\0';
+
+#define APPEND_FREQ(F)                                                         \
+	do                                                                         \
+	{                                                                          \
+		int _f = (F);                                                          \
+		if (_f > 0)                                                            \
+		{                                                                      \
+			int _n = snprintf(                                                 \
+				buf + len, cap - len, "%s%d", (len ? "," : ""), _f);           \
+			if (_n > 0 && (size_t) _n < cap - len) len += (size_t) _n;         \
+		}                                                                      \
+	} while (0)
+
+	if (chan6list != NULL)
+	{
+		char * work = strdup(chan6list);
+		if (work == NULL)
+		{
+			free(buf);
+			return NULL;
+		}
+		char * save = work;
+		char * tok;
+		while ((tok = strsep(&work, ",")) != NULL)
+		{
+			int a, b, c;
+			if (strchr(tok, '-') != NULL)
+			{
+				if (sscanf(tok, "%d-%d", &a, &b) == 2 && a <= b)
+					for (c = a; c <= b; c++)
+						APPEND_FREQ(getFrequencyFromChannel6E(c));
+			}
+			else if (sscanf(tok, "%d", &a) == 1)
+			{
+				APPEND_FREQ(getFrequencyFromChannel6E(a));
+			}
+		}
+		free(save);
+	}
+	else
+	{
+		for (int i = 0; a6_chans[i]; i++)
+			APPEND_FREQ(getFrequencyFromChannel6E(a6_chans[i]));
+	}
+
+	if (with_bg)
+		for (int i = 0; bg_chans[i]; i++)
+			APPEND_FREQ(getFrequencyFromChannel(bg_chans[i]));
+	if (with_a)
+		for (int i = 0; a_chans[i]; i++)
+			APPEND_FREQ(getFrequencyFromChannel(a_chans[i]));
+
+#undef APPEND_FREQ
+
+	if (len == 0)
+	{
+		free(buf);
+		return NULL;
+	}
+	return buf;
+}
+
+/*
+ * Populate the global frequencies[] list directly from an explicit -C style
+ * string ("5955,5975" or "5955-7115"), expanding ranges in 5MHz steps. Used
+ * instead of detect_frequencies() when the user gave an explicit frequency
+ * (or 6GHz channel) list: probing the whole spectrum to "discover" frequencies
+ * the user already named is needlessly slow (hundreds of hardware retunes).
+ * The "-C 0" scan-all case still uses detect_frequencies().
+ */
+static void populate_frequencies_explicit(const char * freqstring)
+{
+	const int max_freq_num = 2048;
+	int i = 0, a, b, f;
+	char *work, *save, *tok;
+
+	frequencies = (int *) malloc((max_freq_num + 1) * sizeof(int));
+	ALLEGE(frequencies != NULL);
+	memset(frequencies, 0, (max_freq_num + 1) * sizeof(int));
+
+	work = save = strdup(freqstring);
+	if (work == NULL)
+	{
+		frequencies[0] = 0;
+		return;
+	}
+
+	while ((tok = strsep(&work, ",")) != NULL)
+	{
+		if (strchr(tok, '-') != NULL)
+		{
+			if (sscanf(tok, "%d-%d", &a, &b) == 2 && a <= b)
+				for (f = a; f <= b && i < max_freq_num; f += 5)
+					frequencies[i++] = f;
+		}
+		else if (sscanf(tok, "%d", &a) == 1 && i < max_freq_num)
+		{
+			frequencies[i++] = a;
+		}
+	}
+	frequencies[i] = 0;
+	free(save);
+}
+
 int main(int argc, char * argv[])
 {
 	long time_slept, cycle_time, cycle_time2;
@@ -5942,7 +6073,9 @@ int main(int argc, char * argv[])
 	int caplen = 0, i, j, fdh, chan_count, freq_count;
 	int fd_raw[MAX_CARDS];
 	int ivs_only, found;
-	int freq[2];
+	int freq[2] = {0, 0};
+	int band6 = 0; /* 6GHz (WiFi 6E/7) band requested */
+	char * chan6_string = NULL; /* raw --channel arg interpreted as 6GHz */
 	int num_opts = 0;
 	int option = 0;
 	int option_index = 0;
@@ -6210,6 +6343,21 @@ int main(int argc, char * argv[])
 		}
 	}
 
+	/* Pre-scan for a 6GHz band request so --channel can be interpreted as
+	 * 6GHz channel numbers regardless of the order of options. */
+	for (i = 1; i < argc; i++)
+	{
+		if ((strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--band") == 0)
+			&& i + 1 < argc)
+		{
+			if (strchr(argv[i + 1], '6') != NULL) band6 = 1;
+		}
+		else if (strncmp(argv[i], "--band=", 7) == 0)
+		{
+			if (strchr(argv[i] + 7, '6') != NULL) band6 = 1;
+		}
+	}
+
 	do
 	{
 		option_index = 0;
@@ -6321,6 +6469,15 @@ int main(int argc, char * argv[])
 
 			case 'c':
 
+				if (band6)
+				{
+					/* 6GHz: keep the raw channel list; resolved to
+					 * frequencies after option parsing (see below). */
+					chan6_string = optarg;
+					lopt.chanoption = 1;
+					break;
+				}
+
 				if (lopt.channel[0] > 0 || lopt.chanoption == 1)
 				{
 					if (lopt.chanoption == 1)
@@ -6335,7 +6492,11 @@ int main(int argc, char * argv[])
 
 				if (lopt.channel[0] < 0)
 				{
-					airodump_usage();
+					printf("Invalid channel(s) for the 2.4/5GHz band: %s\n",
+						   optarg);
+					printf("For 6GHz (WiFi 6E/7), select the band explicitly, "
+						   "e.g.: --band 6 --channel %s\n",
+						   optarg);
 					return (EXIT_FAILURE);
 				}
 
@@ -6379,7 +6540,7 @@ int main(int argc, char * argv[])
 
 			case 'b':
 
-				if (lopt.chanoption == 1)
+				if (lopt.chanoption == 1 && !band6)
 				{
 					printf("Notice: Channel range already given\n");
 					break;
@@ -6392,6 +6553,8 @@ int main(int argc, char * argv[])
 						freq[1] = 1;
 					else if (optarg[i] == 'b' || optarg[i] == 'g')
 						freq[0] = 1;
+					else if (optarg[i] == '6')
+						band6 = 1; /* 6GHz, resolved to frequencies below */
 					else
 					{
 						printf("Error: invalid band (%c)\n", optarg[i]);
@@ -6799,6 +6962,23 @@ int main(int argc, char * argv[])
 
 	if (argc - optind == 1) lopt.s_iface = argv[argc - 1];
 
+	/* 6GHz (WiFi 6E/7) is frequency-backed: its channel numbers overlap
+	 * 2.4/5GHz numbering and cannot drive the channel hopper. Translate the
+	 * requested band(s)/channel(s) into a frequency list and reuse the
+	 * frequency-hopping path (same as -C). */
+	if (band6)
+	{
+		char * fs = build_band6_freqstring(chan6_string, freq[0], freq[1]);
+		if (fs == NULL)
+		{
+			printf("Error: could not build 6GHz frequency list\n");
+			return (EXIT_FAILURE);
+		}
+		lopt.freqstring = fs;
+		lopt.freqoption = 1;
+		lopt.chanoption = 0;
+	}
+
 	if ((memcmp(opt.f_netmask, NULL_MAC, 6) != 0)
 		&& (getMACcount(lopt.rBSSID) == 0))
 	{
@@ -6843,7 +7023,13 @@ int main(int argc, char * argv[])
 
 		if (lopt.freqoption == 1 && lopt.freqstring != NULL) // use frequencies
 		{
-			detect_frequencies(wi[0]);
+			/* "-C 0" means scan every frequency the card supports, which
+			 * requires probing the hardware. For an explicit list we already
+			 * know the frequencies, so skip the slow full-spectrum sweep. */
+			if (strcmp(lopt.freqstring, "0") == 0)
+				detect_frequencies(wi[0]);
+			else
+				populate_frequencies_explicit(lopt.freqstring);
 			lopt.frequency[0] = getfrequencies(lopt.freqstring);
 			if (lopt.frequency[0] == -1)
 			{
