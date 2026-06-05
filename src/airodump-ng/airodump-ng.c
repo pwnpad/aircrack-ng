@@ -121,13 +121,14 @@ static int a_chans[]
 	   118, 120, 122, 124, 126, 128, 132, 134, 136, 138, 140, 142,
 	   144, 149, 151, 153, 155, 157, 159, 161, 165, 169, 173, 0};
 
-/* 6GHz (802.11ax/be) 20MHz channels: 1, 5, 9, ... 233 */
+/* 6GHz (802.11ax/be) 20MHz channels: special low channel 2 (5935 MHz, operating
+ * class 136) then 1, 5, 9, ... 233 */
 static int a6_chans[]
-	= {1,	5,	 9,	  13,  17,	21,	 25,  29,  33,	37,	 41,  45,  49,
-	   53,	57,	 61,  65,  69,	73,	 77,  81,  85,	89,	 93,  97,  101,
-	   105, 109, 113, 117, 121, 125, 129, 133, 137, 141, 145, 149, 153,
-	   157, 161, 165, 169, 173, 177, 181, 185, 189, 193, 197, 201, 205,
-	   209, 213, 217, 221, 225, 229, 233, 0};
+	= {2,	1,	 5,	  9,   13,	17,	 21,  25,  29,	33,	 37,  41,  45,
+	   49,	53,	 57,  61,  65,	69,	 73,  77,  81,	85,	 89,  93,  97,
+	   101, 105, 109, 113, 117, 121, 125, 129, 133, 137, 141, 145, 149,
+	   153, 157, 161, 165, 169, 173, 177, 181, 185, 189, 193, 197, 201,
+	   205, 209, 213, 217, 221, 225, 229, 233, 0};
 
 static int * frequencies;
 
@@ -5973,7 +5974,8 @@ static int rearrange_frequencies(void)
  * --channel style string ("1,5,9" or "1-29") of 6GHz channel numbers; otherwise
  * every 6E channel is used. with_bg / with_a additionally append the 2.4 / 5GHz
  * bands. Frequencies the card does not support are pruned later by
- * detect_frequencies(). Returns a malloc'd string the caller must free, or NULL.
+ * populate_frequencies_explicit(), which probes each one. Returns a malloc'd
+ * string the caller must free, or NULL.
  */
 static char *
 build_band6_freqstring(const char * chan6list, int with_bg, int with_a)
@@ -6048,14 +6050,19 @@ build_band6_freqstring(const char * chan6list, int with_bg, int with_a)
 }
 
 /*
- * Populate the global frequencies[] list directly from an explicit -C style
- * string ("5955,5975" or "5955-7115"), expanding ranges in 5MHz steps. Used
- * instead of detect_frequencies() when the user gave an explicit frequency
- * (or 6GHz channel) list: probing the whole spectrum to "discover" frequencies
- * the user already named is needlessly slow (hundreds of hardware retunes).
- * The "-C 0" scan-all case still uses detect_frequencies().
+ * Populate the global frequencies[] list from an explicit -C style string
+ * ("5955,5975" or "5955-7115"), expanding ranges in 5MHz steps. Used instead of
+ * detect_frequencies() when the user gave an explicit frequency (or 6GHz
+ * channel) list: probing the whole spectrum to "discover" frequencies the user
+ * already named is needlessly slow. The "-C 0" scan-all case still uses
+ * detect_frequencies().
+ *
+ * Each candidate is still probed with wi_set_freq() and only kept if the card
+ * accepts it, so frequencies the radio cannot tune (e.g. 6GHz channels on a
+ * 5GHz-only card) are pruned rather than wasting a hop slot each cycle. Probing
+ * only the named frequencies keeps this far cheaper than a full sweep.
  */
-static void populate_frequencies_explicit(const char * freqstring)
+static void populate_frequencies_explicit(struct wif * wi, const char * freqstring)
 {
 	const int max_freq_num = 2048;
 	int i = 0, a, b, f;
@@ -6072,21 +6079,37 @@ static void populate_frequencies_explicit(const char * freqstring)
 		return;
 	}
 
+#define KEEP_IF_SUPPORTED(F)                                                   \
+	do                                                                         \
+	{                                                                          \
+		int _f = (F);                                                          \
+		if (i < max_freq_num && _f > 0 && wi_set_freq(wi, _f) == 0)            \
+			frequencies[i++] = _f;                                             \
+	} while (0)
+
 	while ((tok = strsep(&work, ",")) != NULL)
 	{
 		if (strchr(tok, '-') != NULL)
 		{
 			if (sscanf(tok, "%d-%d", &a, &b) == 2 && a <= b)
 				for (f = a; f <= b && i < max_freq_num; f += 5)
-					frequencies[i++] = f;
+					KEEP_IF_SUPPORTED(f);
 		}
-		else if (sscanf(tok, "%d", &a) == 1 && i < max_freq_num)
+		else if (sscanf(tok, "%d", &a) == 1)
 		{
-			frequencies[i++] = a;
+			KEEP_IF_SUPPORTED(a);
 		}
 	}
+
+#undef KEEP_IF_SUPPORTED
+
 	frequencies[i] = 0;
 	free(save);
+
+	if (i == 0)
+		fprintf(stderr,
+				"Warning: the card did not accept any of the requested "
+				"frequencies\n");
 }
 
 int main(int argc, char * argv[])
@@ -7052,7 +7075,7 @@ int main(int argc, char * argv[])
 			if (strcmp(lopt.freqstring, "0") == 0)
 				detect_frequencies(wi[0]);
 			else
-				populate_frequencies_explicit(lopt.freqstring);
+				populate_frequencies_explicit(wi[0], lopt.freqstring);
 			lopt.frequency[0] = getfrequencies(lopt.freqstring);
 			if (lopt.frequency[0] == -1)
 			{
