@@ -363,24 +363,34 @@ static void nl80211_cleanup(struct nl80211_state * state)
 
 /* Callbacks */
 
-/*
-static int error_handler(struct sockaddr_nl *nla, struct nlmsgerr *err,
-					 void *arg)
+/* Minimal synchronous request/response handlers, modelled on iw(8). The shared
+ * int *arg starts at 1 and is driven to 0 on success or a negative errno on a
+ * kernel rejection, so the caller can loop nl_recvmsgs() while it stays > 0. */
+static int error_handler(struct sockaddr_nl * nla,
+						 struct nlmsgerr * err,
+						 void * arg)
 {
 	if (nla) { }
-	printf("\n\n\nERROR");
-	int *ret = arg;
+	int * ret = arg;
 	*ret = err->error;
 	return NL_STOP;
 }
-*/
 
-/*
-static void test_callback(struct nl_msg *msg, void *arg)
+static int finish_handler(struct nl_msg * msg, void * arg)
 {
-	if (msg || arg) { }
+	if (msg) { }
+	int * ret = arg;
+	*ret = 0;
+	return NL_SKIP;
 }
-*/
+
+static int ack_handler(struct nl_msg * msg, void * arg)
+{
+	if (msg) { }
+	int * ret = arg;
+	*ret = 0;
+	return NL_STOP;
+}
 #endif /* End nl80211 */
 
 static int linux_get_channel(struct wif * wi)
@@ -1101,6 +1111,8 @@ static int linux_set_freq_nl80211(struct wif * wi, int freq)
 	struct priv_linux * dev = wi_priv(wi);
 	unsigned int devid;
 	struct nl_msg * msg;
+	struct nl_cb * cb;
+	int err;
 
 	/* exec-based legacy drivers can't talk nl80211: use the WEXT path */
 	switch (dev->drivertype)
@@ -1122,6 +1134,13 @@ static int linux_set_freq_nl80211(struct wif * wi, int freq)
 		return 2;
 	}
 
+	cb = nl_cb_alloc(NL_CB_DEFAULT);
+	if (!cb)
+	{
+		nlmsg_free(msg);
+		return 2;
+	}
+
 	genlmsg_put(msg,
 				0,
 				0,
@@ -1135,13 +1154,29 @@ static int linux_set_freq_nl80211(struct wif * wi, int freq)
 	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
 	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE, NL80211_CHAN_NO_HT);
 
+	/* Send synchronously and read the kernel's reply so an unsupported
+	 * frequency is reported back (err < 0) instead of silently "succeeding".
+	 * detect_frequencies()/populate_frequencies_explicit() rely on this to
+	 * prune frequencies the card cannot tune. */
+	err = 1;
+	nl_cb_err(cb, NL_CB_CUSTOM, error_handler, &err);
+	nl_cb_set(cb, NL_CB_FINISH, NL_CB_CUSTOM, finish_handler, &err);
+	nl_cb_set(cb, NL_CB_ACK, NL_CB_CUSTOM, ack_handler, &err);
+
 	nl_send_auto_complete(state.nl_sock, msg);
+	while (err > 0) nl_recvmsgs(state.nl_sock, cb);
+
+	nl_cb_put(cb);
 	nlmsg_free(msg);
+
+	if (err < 0) return err;
 
 	dev->freq = freq;
 
 	return (0);
 nla_put_failure:
+	nl_cb_put(cb);
+	nlmsg_free(msg);
 	return -ENOBUFS;
 }
 #else // CONFIG_LIBNL
