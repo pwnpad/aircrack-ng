@@ -6057,12 +6057,13 @@ build_band6_freqstring(const char * chan6list, int with_bg, int with_a)
  * already named is needlessly slow. The "-C 0" scan-all case still uses
  * detect_frequencies().
  *
- * Each candidate is still probed with wi_set_freq() and only kept if the card
- * accepts it, so frequencies the radio cannot tune (e.g. 6GHz channels on a
- * 5GHz-only card) are pruned rather than wasting a hop slot each cycle. Probing
- * only the named frequencies keeps this far cheaper than a full sweep.
+ * The named frequencies are taken as-is without per-frequency hardware probing:
+ * on slow radios each wi_set_freq() blocks on a hardware retune (hundreds of ms
+ * on 6GHz), so probing the whole band here would stall startup for ~10s before
+ * the UI appears. Frequencies the card cannot tune are dropped at runtime by the
+ * frequency hopper instead (it marks own_frequencies[] -1 on a failed retune).
  */
-static void populate_frequencies_explicit(struct wif * wi, const char * freqstring)
+static void populate_frequencies_explicit(const char * freqstring)
 {
 	const int max_freq_num = 2048;
 	int i = 0, a, b, f;
@@ -6079,37 +6080,22 @@ static void populate_frequencies_explicit(struct wif * wi, const char * freqstri
 		return;
 	}
 
-#define KEEP_IF_SUPPORTED(F)                                                   \
-	do                                                                         \
-	{                                                                          \
-		int _f = (F);                                                          \
-		if (i < max_freq_num && _f > 0 && wi_set_freq(wi, _f) == 0)            \
-			frequencies[i++] = _f;                                             \
-	} while (0)
-
 	while ((tok = strsep(&work, ",")) != NULL)
 	{
 		if (strchr(tok, '-') != NULL)
 		{
 			if (sscanf(tok, "%d-%d", &a, &b) == 2 && a <= b)
 				for (f = a; f <= b && i < max_freq_num; f += 5)
-					KEEP_IF_SUPPORTED(f);
+					frequencies[i++] = f;
 		}
-		else if (sscanf(tok, "%d", &a) == 1)
+		else if (sscanf(tok, "%d", &a) == 1 && i < max_freq_num)
 		{
-			KEEP_IF_SUPPORTED(a);
+			frequencies[i++] = a;
 		}
 	}
 
-#undef KEEP_IF_SUPPORTED
-
 	frequencies[i] = 0;
 	free(save);
-
-	if (i == 0)
-		fprintf(stderr,
-				"Warning: the card did not accept any of the requested "
-				"frequencies\n");
 }
 
 int main(int argc, char * argv[])
@@ -7075,7 +7061,7 @@ int main(int argc, char * argv[])
 			if (strcmp(lopt.freqstring, "0") == 0)
 				detect_frequencies(wi[0]);
 			else
-				populate_frequencies_explicit(wi[0], lopt.freqstring);
+				populate_frequencies_explicit(lopt.freqstring);
 			lopt.frequency[0] = getfrequencies(lopt.freqstring);
 			if (lopt.frequency[0] == -1)
 			{
